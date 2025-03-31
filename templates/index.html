@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF 회전기</title>
+
+    <!-- 안정된 PDF.js 버전 사용 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script>
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+    </script>
+
+    <style>
+        canvas {
+            border: 1px solid #ccc;
+            margin-top: 10px;
+            display: block;
+            width: 200px;
+        }
+
+        #loadingStatus {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #0066cc;
+        }
+    </style>
+</head>
+<body>
+    <h2>PDF 회전 도구</h2>
+
+    <form id="pdfForm" method="post" enctype="multipart/form-data">
+        <input type="file" id="pdfFile" name="pdf" accept="application/pdf" required>
+        <br><br>
+        <button type="button" onclick="rotate(-90)">⟲ 왼쪽 90°</button>
+        <button type="button" onclick="rotate(90)">⟳ 오른쪽 90°</button>
+        <button type="button" onclick="submitPDF()">회전된 PDF 다운로드</button>
+    </form>
+
+    <p id="loadingStatus">PDF 파일을 업로드해주세요.</p>
+    <canvas id="pdfCanvas"></canvas>
+
+    <script>
+        let pdfDoc = null;
+        let currentPage = null;
+        let rotation = 0;
+        let fakeProgressInterval;
+
+        document.getElementById('pdfFile').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (file) {
+                document.getElementById('loadingStatus').innerText = 'PDF 로딩 중...';
+
+                const fileReader = new FileReader();
+                fileReader.onload = function () {
+                    const typedarray = new Uint8Array(this.result);
+
+                    pdfjsLib.getDocument({
+                        data: typedarray,
+                        onProgress: function (progressData) {
+                            const percent = Math.round(progressData.loaded / progressData.total * 100);
+                            document.getElementById('loadingStatus').innerText = `PDF 로딩 중... ${percent}%`;
+                        }
+                    }).promise.then(function (pdf) {
+                        pdfDoc = pdf;
+                        pdfDoc.getPage(1).then(function (page) {
+                            currentPage = page;
+                            renderPage();
+                            document.getElementById('loadingStatus').innerText = 'PDF 로딩 완료!';
+                        });
+                    }).catch(function (err) {
+                        document.getElementById('loadingStatus').innerText = 'PDF 로딩 실패';
+                        console.error(err);
+                    });
+                };
+                fileReader.readAsArrayBuffer(file);
+            }
+        });
+
+        function renderPage() {
+            const canvas = document.getElementById('pdfCanvas');
+            const context = canvas.getContext('2d');
+            const viewport = currentPage.getViewport({ scale: 1.5, rotation: rotation });
+
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+
+            const renderContext = {
+                canvasContext: context,
+                viewport: viewport
+            };
+            currentPage.render(renderContext);
+        }
+
+        function rotate(degrees) {
+            if (!currentPage) {
+                alert("먼저 PDF를 업로드하세요!");
+                return;
+            }
+            rotation = (rotation + degrees + 360) % 360;
+            renderPage();
+        }
+
+        function submitPDF() {
+            const fileInput = document.getElementById('pdfFile');
+            if (!fileInput.files.length) {
+                alert('PDF 파일을 업로드하세요.');
+                return;
+            }
+
+            // ✅ 진행률 초기화
+            let fakePercent = 0;
+            const loadingText = document.getElementById('loadingStatus');
+            loadingText.innerText = 'PDF 변환 중... 0%';
+
+            // ✅ 페이크 퍼센트 애니메이션 시작
+            fakeProgressInterval = setInterval(() => {
+                if (fakePercent < 90) {
+                    fakePercent++;
+                    loadingText.innerText = `PDF 변환 중... ${fakePercent}%`;
+                }
+            }, 50);
+
+            const formData = new FormData();
+            formData.append('pdf', fileInput.files[0]);
+            formData.append('direction', rotation);
+
+            fetch('/rotate', {
+                method: 'POST',
+                body: formData
+            }).then(response => response.blob())
+              .then(blob => {
+                  clearInterval(fakeProgressInterval);  // 애니메이션 중단
+                  loadingText.innerText = 'PDF 변환 중... 100%';
+
+                  const url = window.URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'rotated.pdf';
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+
+                  setTimeout(() => {
+                      loadingText.innerText = 'PDF 다운로드 완료!';
+                  }, 1000);
+              })
+              .catch(err => {
+                  clearInterval(fakeProgressInterval);
+                  loadingText.innerText = 'PDF 변환 중 오류 발생 😢';
+                  console.error(err);
+              });
+        }
+    </script>
+</body>
+</html>
